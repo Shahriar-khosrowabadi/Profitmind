@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+pydantic
+pandas
+numpy
+scikit-learn
+torch
+tensorflow
+joblib
+python-dotenv
+requests
+pandas-ta
+mlflow
