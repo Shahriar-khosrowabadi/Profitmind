@@ -1,3 +1,5 @@
+![ProfitMind](docs/images/ProfitMind%20picture.png)
+
 # Financial AI Platform
 
 A full-stack financial dashboard with a modern Next.js frontend, a FastAPI backend, and an optional AI service scaffold.
@@ -166,3 +168,4 @@ Additional documents are in `docs/`:
 ## License
 
 Proprietary. All rights reserved.
+
