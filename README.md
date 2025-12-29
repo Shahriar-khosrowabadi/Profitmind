@@ -1,4 +1,4 @@
-![ProfitMind](docs/images/ProfitMind%20picture.png)
+![ProfitMind](docs/images/ProfitMind.png)
 
 # Financial AI Platform
 
@@ -168,4 +168,5 @@ Additional documents are in `docs/`:
 ## License
 
 Proprietary. All rights reserved.
+
 
