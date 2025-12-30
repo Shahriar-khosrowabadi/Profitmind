@@ -18,16 +18,16 @@ type Props = {
   // Controlled filters (optional).
   symbol?: AssetSymbol;
   range?: RangeOption;
-  onSymbolChange?: (symbol: AssetSymbol) => void;
-  onRangeChange?: (range: RangeOption) => void;
+  // When false, chart only loads after refreshToken changes.
+  autoLoad?: boolean;
 };
 
 export type AssetSymbol = 'usd_xau';
 export type RangeOption = 'day' | '1m' | '3m';
 
-type NavasanPoint = { time: number; value: number };
+type PricePoint = { time: Time; value: number };
 
-type NavasanResponse = {
+type PriceSeriesResponse = {
   symbol: AssetSymbol;
   range: RangeOption;
   latest: {
@@ -36,7 +36,7 @@ type NavasanResponse = {
     timestamp?: number;
     date?: string;
   };
-  series: NavasanPoint[];
+  series: PricePoint[];
 };
 
 const TradingViewChart: React.FC<Props> = ({
@@ -45,8 +45,7 @@ const TradingViewChart: React.FC<Props> = ({
   refreshToken,
   symbol: controlledSymbol,
   range: controlledRange,
-  onSymbolChange,
-  onRangeChange,
+  autoLoad = true,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -55,8 +54,10 @@ const TradingViewChart: React.FC<Props> = ({
   const [error, setError] = useState<string | null>(null);
   const [symbol, setSymbol] = useState<AssetSymbol>(controlledSymbol ?? 'usd_xau');
   const [range, setRange] = useState<RangeOption>(controlledRange ?? '1m');
-  const [seriesData, setSeriesData] = useState<NavasanPoint[]>([]);
+  const [seriesData, setSeriesData] = useState<PricePoint[]>([]);
   const [isFetching, setIsFetching] = useState(false);
+  const [trendTone, setTrendTone] = useState<'up' | 'down'>('up');
+  const initialRefreshToken = useRef<number | undefined>(refreshToken);
   const chartId = useMemo(
     () => `lw-xauusd-${Math.random().toString(36).slice(2, 9)}`,
     []
@@ -166,7 +167,7 @@ const TradingViewChart: React.FC<Props> = ({
       const effectiveSymbol = controlledSymbol ?? symbol;
       const effectiveRange = controlledRange ?? range;
       const res = await fetch(
-        `/api/navasan?symbol=${effectiveSymbol}&range=${effectiveRange}&ts=${Date.now()}`,
+        `/api/market?symbol=${effectiveSymbol}&range=${effectiveRange}&ts=${Date.now()}`,
         { cache: 'no-store' }
       );
 
@@ -181,8 +182,17 @@ const TradingViewChart: React.FC<Props> = ({
         throw new Error(`Data error ${res.status}${serverMessage}`);
       }
 
-      const payload: NavasanResponse = await res.json();
-      const sorted = (payload.series ?? []).slice().sort((a, b) => a.time - b.time);
+      const payload: PriceSeriesResponse = await res.json();
+      const normalized = (payload.series ?? []).map((point) => ({
+        time:
+          (typeof point.time === 'number'
+            ? point.time
+            : toUnixTime(point.time)) as Time,
+        value: point.value,
+      }));
+      const sorted = normalized.slice().sort((a, b) => {
+        return toUnixTime(a.time) - toUnixTime(b.time);
+      });
       if (!sorted.length) {
         throw new Error('No data returned for chart');
       }
@@ -191,11 +201,17 @@ const TradingViewChart: React.FC<Props> = ({
 
       const lastPoint = sorted[sorted.length - 1];
       const firstPoint = sorted[0];
+      const prevPoint = sorted.length > 1 ? sorted[sorted.length - 2] : undefined;
       const changePct =
         firstPoint && firstPoint.value !== 0
           ? ((lastPoint.value - firstPoint.value) / firstPoint.value) * 100
           : undefined;
 
+      const latestDelta =
+        prevPoint && prevPoint.value !== 0
+          ? lastPoint.value - prevPoint.value
+          : undefined;
+      setTrendTone(latestDelta !== undefined && latestDelta < 0 ? 'down' : 'up');
       onPriceUpdate?.(lastPoint.value, changePct ?? payload.latest.change);
       setError(null);
       setIsReady(true);
@@ -207,11 +223,13 @@ const TradingViewChart: React.FC<Props> = ({
   }, [controlledRange, controlledSymbol, onPriceUpdate, range, symbol]);
 
   useEffect(() => {
+    if (!autoLoad) return;
     fetchSeries();
   }, [fetchSeries]);
 
   useEffect(() => {
     if (refreshToken === undefined) return;
+    if (!autoLoad && refreshToken === initialRefreshToken.current) return;
     fetchSeries();
   }, [fetchSeries, refreshToken]);
 
@@ -296,6 +314,20 @@ const TradingViewChart: React.FC<Props> = ({
   }, [seriesData]);
 
   useEffect(() => {
+    if (!seriesRef.current) return;
+    const isDown = trendTone === 'down';
+    const line = isDown ? 'rgba(248, 113, 113, 1)' : 'rgba(52, 211, 153, 1)';
+    const top = isDown ? 'rgba(248, 113, 113, 0.25)' : 'rgba(52, 211, 153, 0.25)';
+    const bottom = isDown ? 'rgba(248, 113, 113, 0.05)' : 'rgba(52, 211, 153, 0.05)';
+    seriesRef.current.applyOptions({
+      lineColor: line,
+      topColor: top,
+      bottomColor: bottom,
+      priceLineColor: line,
+    });
+  }, [trendTone]);
+
+  useEffect(() => {
     if (!chartRef.current) return;
     const selected = controlledRange ?? range;
     chartRef.current.timeScale().applyOptions(getTimeScaleOptions(selected));
@@ -306,7 +338,19 @@ const TradingViewChart: React.FC<Props> = ({
 
   return (
     <div className={`relative w-full h-[420px] rounded-xl overflow-hidden ${className}`}>
-      {(!isReady || isFetching) && (
+      {!autoLoad && !isFetching && !seriesData.length && !error ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/20 backdrop-blur-sm z-10">
+          <div className="rounded-xl border border-[color:var(--dash-border)] bg-[color:var(--dash-panel)]/80 px-4 py-3 text-center">
+            <p className="text-xs text-[color:var(--dash-muted)]">
+              Chart data is paused to avoid API limits.
+            </p>
+            <p className="text-xs text-[color:var(--dash-strong)] mt-1">
+              Click the Refresh button to load data.
+            </p>
+          </div>
+        </div>
+      ) : null}
+      {(isFetching || (autoLoad && !isReady)) && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/20 backdrop-blur-sm z-10">
           <div className="h-10 w-10 border-4 border-white/20 border-t-[var(--profit)] rounded-full animate-spin" />
           <p className="text-xs text-white/60 mt-3">
@@ -325,3 +369,4 @@ const TradingViewChart: React.FC<Props> = ({
 };
 
 export default TradingViewChart;
+

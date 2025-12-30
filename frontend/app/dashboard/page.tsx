@@ -17,14 +17,29 @@ import {
   TrendingUp,
   Wallet2,
 } from 'lucide-react';
-import React, { useMemo, useState } from 'react';
+import Image from 'next/image';
+import React, { useEffect, useMemo, useState } from 'react';
+
+type MarketItem = {
+  id: string;
+  name: string;
+  symbol: string;
+  pair: string;
+  currencyLabel: string;
+  price?: number;
+  change?: number;
+  iconUrl?: string;
+};
+
+type MarketResponse = {
+  items: MarketItem[];
+  updatedAt: string;
+};
 
 const DashboardPage = () => {
-  const pools = [
-    { label: 'Gold Pool', value: '$144,657.89', change: '+1.73%' },
-    { label: 'Stable Yield', value: '$42,098.10', change: '+0.82%' },
-    { label: 'Risk Guard', value: '$28,004.12', change: '-0.23%' },
-  ];
+  const [marketItems, setMarketItems] = useState<MarketItem[]>([]);
+  const [marketLoading, setMarketLoading] = useState(true);
+  const [marketError, setMarketError] = useState<string | null>(null);
 
   const quickStats = [
     { label: 'Balance', value: '$164,647.86', icon: Wallet2 },
@@ -38,6 +53,47 @@ const DashboardPage = () => {
   const [selectedSymbol, setSelectedSymbol] = useState<AssetSymbol>('usd_xau');
   const selectedRange: RangeOption = '1m';
   const [refreshToken, setRefreshToken] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    const loadMarket = async () => {
+      setMarketLoading(true);
+      try {
+        const res = await fetch(`/api/crypto?ts=${Date.now()}`, {
+          cache: 'no-store',
+        });
+        if (!res.ok) {
+          let serverMessage = '';
+          try {
+            const body = (await res.json()) as { error?: string };
+            serverMessage = body?.error ? `: ${body.error}` : '';
+          } catch {
+            serverMessage = '';
+          }
+          throw new Error(`Crypto data error ${res.status}${serverMessage}`);
+        }
+        const payload = (await res.json()) as MarketResponse;
+        if (active) {
+          setMarketItems(payload.items ?? []);
+          setMarketError(null);
+        }
+      } catch (err: any) {
+        if (active) {
+          setMarketItems([]);
+          setMarketError(err.message ?? 'Failed to load crypto data');
+        }
+      } finally {
+        if (active) {
+          setMarketLoading(false);
+        }
+      }
+    };
+
+    loadMarket();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const formattedAssetPrice = useMemo(() => {
     if (assetPrice === null) return 'Loading...';
@@ -60,46 +116,91 @@ const DashboardPage = () => {
       ? 'text-[var(--profit)]'
       : 'text-red-400';
 
+  const formatMarketPrice = (item: MarketItem) => {
+    if (item.price === undefined) return '--';
+    const decimals = item.price < 1 ? 3 : 0;
+    const formatted = item.price.toLocaleString('en-US', {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+    return `$${formatted}`;
+  };
+
+  const formatMarketChange = (change?: number) => {
+    if (change === undefined) return '--';
+    const sign = change >= 0 ? '+' : '';
+    return `${sign}${change.toFixed(2)}%`;
+  };
+
   return (
     <DashboardLayout>
       <div className="grid xl:grid-cols-12 gap-6">
         <div className="xl:col-span-3 space-y-6">
           <GlassCard>
             <div className="flex items-center justify-between mb-4">
-              <div>
-                <p className="text-sm text-[color:var(--dash-muted)]">
-                  Portfolio value
-                </p>
-                <p className="text-2xl font-semibold">$165,564.58</p>
-              </div>
-              <span className="text-xs text-[var(--profit)] bg-[var(--profit)]/10 px-2 py-1 rounded-full">
-                +8.35%
-              </span>
+              <p className="text-lg font-semibold ">Crypto Currency</p>
             </div>
-
             <div className="space-y-3">
-              {pools.map((p) => (
-                <div
-                  key={p.label}
-                  className="flex items-center justify-between px-3 py-3 rounded-xl bg-[color:var(--dash-surface)] border border-[color:var(--dash-border)]"
-                >
-                  <div>
-                    <p className="text-xs text-[color:var(--dash-muted)]">
-                      {p.label}
-                    </p>
-                    <p className="text-sm font-semibold">{p.value}</p>
-                  </div>
-                  <span
-                    className={`text-xs font-semibold ${
-                      p.change.startsWith('-')
-                        ? 'text-red-400'
-                        : 'text-[var(--profit)]'
-                    }`}
+              {marketItems.length ? (
+                marketItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between px-3 py-3 rounded-xl bg-[color:var(--dash-surface)] border border-[color:var(--dash-border)]"
                   >
-                    {p.change}
-                  </span>
+                    <div className="flex items-center gap-3">
+                      <div className="h-9 w-9  rounded-xl bg-[color:var(--dash-soft)] border border-[color:var(--dash-border)] flex items-center justify-center overflow-hidden">
+                        {item.iconUrl ? (
+                          <Image
+                            src={item.iconUrl}
+                            alt={`${item.name} icon`}
+                            width={28}
+                            height={28}
+                          />
+                        ) : (
+                          <span className="text-xs  font-semibold text-[color:var(--dash-muted)]">
+                            {item.symbol}
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs text-[color:var(--dash-muted)]">
+                          {item.name}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold">{item.symbol}</p>
+                          {item.pair && item.pair !== item.symbol ? (
+                            <span className="text-[10px] uppercase tracking-wide text-[color:var(--dash-muted)]">
+                              {item.pair}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-semibold">
+                        {formatMarketPrice(item)}
+                      </p>
+                      <span
+                        className={`text-xs font-semibold ${
+                          item.change === undefined
+                            ? 'text-[color:var(--dash-muted)]'
+                            : item.change >= 0
+                            ? 'text-[var(--profit)]'
+                            : 'text-red-400'
+                        }`}
+                      >
+                        {formatMarketChange(item.change)}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="px-3 py-3 rounded-xl bg-[color:var(--dash-surface)] border border-[color:var(--dash-border)] text-xs text-[color:var(--dash-muted)]">
+                  {marketLoading
+                    ? 'Loading market data...'
+                    : marketError ?? 'No market data available.'}
                 </div>
-              ))}
+              )}
             </div>
           </GlassCard>
 
@@ -228,6 +329,7 @@ const DashboardPage = () => {
               symbol={selectedSymbol}
               range={selectedRange}
               refreshToken={refreshToken}
+              autoLoad={false}
               onPriceUpdate={(price, changePct) => {
                 setAssetPrice(price);
                 setAssetChange(changePct ?? null);
